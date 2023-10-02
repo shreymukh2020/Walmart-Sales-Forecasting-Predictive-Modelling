@@ -1,0 +1,830 @@
+---
+title: "Walmart_Shreya"
+author: "Shreyashi Mukhopadhyay"
+date: "3/19/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+### Load Packages
+
+
+```{r}
+# Walmart Sales Forecasting
+
+# https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting/data
+
+# Predict the department-wide sales for each store
+
+# 45 stores
+library(ggplot2)
+library(foreign)
+library(tidyverse)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(RColorBrewer)
+library(ggcorrplot)
+library(stringr)
+library(stargazer)
+library(ggfortify)
+library(forecast)
+library(MLmetrics)
+library(xts)
+library(zoo)
+library(fpp2)
+library(TTR)
+theme_set(theme_classic())
+
+```
+
+### Read the Data files and merge them into one file.
+
+```{r}
+
+# Read the data files
+
+dfFeatures <- read.csv("features.csv")
+dfStores <- read.csv("stores.csv")
+dfTrain <- read.csv("train.csv")
+
+```
+
+### Display the structure of the data frames
+
+```{r}
+
+str(dfFeatures)
+str(dfStores)
+str(dfTrain)
+
+
+```
+
+
+```{r}
+
+head(dfFeatures)
+
+head(dfStores)
+
+head(dfTrain)
+
+
+```
+
+
+
+### Merge Type, Size, Dept and Sales
+
+```{r}
+# Merge the Train and stores data
+
+dfTrainStore <- merge(x=dfTrain, y=dfStores, all.x=TRUE)
+
+# Merge all the Train and store data with the Features data
+
+dfTrainMerged <- merge(x=dfTrainStore, y=dfFeatures, all.x=TRUE)
+
+```
+
+
+### View the structure of the dfTrainMerged dataframe
+
+
+```{r}
+
+str(dfTrainMerged)
+
+```
+
+### View the data
+
+```{r}
+
+head(dfTrainMerged)
+
+```
+
+
+### Dealing with Boolean Values
+
+
+```{r}
+
+dfTrainMerged$IsHoliday [dfTrainMerged$IsHoliday == "TRUE"] <- 1
+
+dfTrainMerged$IsHoliday [dfTrainMerged$IsHoliday == "FALSE"] <- 0
+
+head(dfTrainMerged)
+
+```
+
+### Dealing with NA values -- Setting NA values to 0
+
+
+```{r}
+
+dfTrainMerged[is.na(dfTrainMerged)] <- 0
+
+print(colSums(is.na(dfTrainMerged)))
+
+
+```
+### Formatting the date and split into Year, Month and Day.
+
+
+```{r}
+
+head(dfTrainMerged)
+
+```
+
+
+```{r}
+
+
+dfTrainMerged$Date <- as.Date(dfTrainMerged$Date, "%m/%d/%Y")
+
+dfTrainMerged1 <- separate(dfTrainMerged, "Date", c("Year", "Month", "Day"), sep = '-')
+
+dfTrainMerged1$Week <- format(dfTrainMerged$Date, "%V")
+
+
+#head(dfTrainMerged)
+
+#head(dfTrainMerged1)
+
+#names(dfTrainMerged1)
+
+```
+
+
+
+
+```{r}
+
+str(dfTrainMerged1)
+
+```
+
+### Save the merged datasets
+
+
+```{r}
+
+# Save the Datasets
+
+write.table(x=dfTrainMerged1,
+            file='trainMerged.csv',
+            sep=',', row.names=FALSE, quote=FALSE)
+
+
+```
+
+## Pattern Discovery 
+
+
+#### ###############################################################################
+###  Statistical Summary of the data
+### ###############################################################################
+
+
+### Distribution of Continuous Variables 
+
+
+```{r}
+
+#Distribution of Variables
+
+par(mfrow=c(3,2))
+hist(dfTrainMerged1$Store, col = 'gold', main = "Stores")
+hist(dfTrainMerged1$Temperature, col = 'orange', main = "Temperature")
+hist(dfTrainMerged1$Fuel_Price, col = 'blue', main = "Fuel Price")
+hist(dfTrainMerged1$CPI, col = 'green', main = "CPI")
+hist(dfTrainMerged1$Unemployment, col = 'pink', main = "Unemployment")
+hist(dfTrainMerged1$Size, col = 'navy', main = "Store Size")
+
+
+par(mfrow = c(2,3))
+
+hist(dfFeatures$MarkDown1 , col = "blue")
+hist(dfFeatures$MarkDown2, col = "pink")
+hist(dfFeatures$MarkDown3, col = "red")
+hist(dfFeatures$MarkDown4, col = "cyan")
+hist(dfFeatures$MarkDown5, col = "green")
+
+```
+
+
+## Group by number of stores and get count
+
+
+```{r}
+
+# Groupby count of single column
+ 
+total = dfStores %>% group_by(Type) %>% summarize(n()) %>% rename(`Number of Stores` = `n()`)
+total
+
+total1  = data.frame(total)
+total1
+
+ggplot(total1, aes(x = Type,y =Number.of.Stores , geom='bar', fill = "Blue", col = "Blue")) + 
+  geom_col() +
+  ggtitle("Distribution of number of stores by Store Type")
+
+
+
+```
+## Total weekly sales by Year
+
+
+```{r}
+
+# Groupby count of multiple columns
+ 
+total3 = aggregate(dfTrainMerged1$Weekly_Sales, by=list(dfTrainMerged1$Year), FUN=length)
+
+total3
+
+
+ggplot(total3, aes(x = Group.1,y = x , geom='bar', fill = "Blue", col = "Blue")) + 
+  geom_col() +
+  labs(x = "Year", y = "Weekly Sales", title = "Total Weekly sales per year")
+
+
+```
+
+### Temperature, Fuel Price and Unemployment are fairly normally distributed. Store Sizes have brackets on both ends indicating large number of large and small stores. The medium sized stores are very few in comparison in this dataset. We might need to do some transformation of this data.
+
+
+```{r}
+
+par(mfrow = c(1,2))
+
+hist(dfTrainMerged$Weekly_Sales, col = 'light green', main = "Weekly Sales Original", xlab = "Weekly Sales")
+
+hist(log(dfTrainMerged$Weekly_Sales), col = 'light green', main = "Weekly Sales Transformed", xlab ='log(Weekly Sales)')
+
+```
+### Monthly Sales Distribution by year
+
+
+```{r}
+
+ggplot(dfTrainMerged1, aes(x = Month,y = Weekly_Sales , geom='bar', fill = 'gold')) + 
+  geom_col() +
+  facet_wrap(~Year) + 
+  ggtitle("Monthly Sales Distribution by year")
+
+```
+
+
+### Training Data is missing for January in 2010, November and December in 2012.There are weeks when Sales peaks in the festive months of November and December.Also seems like there is a dip in September - October leading towards the holiday weeks.
+
+
+
+### Grouping Weeks based on Sales: Weekly Sales per week
+
+
+```{r}
+
+Weeks2011A <- dfTrainMerged1 %>% 
+  filter(Year == 2011, Type == "A") %>% 
+  group_by(Type, Week) %>% 
+  summarize(Size = mean(Size), WeeklySales = sum(Weekly_Sales))
+
+Weeks2011B <- dfTrainMerged1 %>% 
+  filter(Year == 2011, Type == "B") %>% 
+  group_by(Type, Week) %>% 
+  summarize(Size = mean(Size), WeeklySales = mean(Weekly_Sales))
+
+Weeks2011C <- dfTrainMerged1 %>% 
+  filter(Year == 2011, Type == "C") %>% 
+  group_by(Type, Week) %>% 
+  summarize(Size = mean(Size), WeeklySales = mean(Weekly_Sales))
+
+
+#Calculating upper and lower threshold based on 5% bounds
+Weeks2011A$MeanWeeklySales <- mean(Weeks2011A$WeeklySales)
+Weeks2011B$MeanWeeklySales <- mean(Weeks2011B$WeeklySales)
+Weeks2011C$MeanWeeklySales <- mean(Weeks2011C$WeeklySales)
+
+Weeks2011A$SalesUpperThreshold <- mean(Weeks2011A$WeeklySales) * 1.05
+Weeks2011A$SalesLowerThreshold <- mean(Weeks2011A$WeeklySales) * 0.95
+
+Weeks2011B$SalesUpperThreshold <- mean(Weeks2011B$WeeklySales) * 1.05
+Weeks2011B$SalesLowerThreshold <- mean(Weeks2011B$WeeklySales) * 0.95
+
+Weeks2011C$SalesUpperThreshold <- mean(Weeks2011C$WeeklySales) * 1.05
+Weeks2011C$SalesLowerThreshold <- mean(Weeks2011C$WeeklySales) * 0.95
+
+ggplot(Weeks2011A, aes(x = Week,y = WeeklySales, geom="bar", fill = "gold")) + ggtitle("Total Sales per week")+
+  geom_col()
+
+ggsave("Sales per week.png", width = 50, height = 20, units = "cm")
+
+
+
+```
+### Store sales by store type
+
+```{r}
+
+
+#library(dplyr)
+
+agg = aggregate(dfTrainMerged$Weekly_Sales, by=list(Type=dfTrainMerged$Type), FUN=sum)
+
+agg1  = data.frame(agg)
+
+ggplot(agg1, aes(x = Type,y = x , geom='bar', fill = "Blue", col = "Blue")) + 
+  geom_col() +
+  labs(x = "Type", y = "Weekly Sales", title = "Weekly sales by Store Type")+
+  ggtitle("Sales Distribution by Store Type")
+
+```
+
+### Stores' size distribution by type of store
+
+```{r}
+
+ggplot(dfTrainMerged1, aes(x = Type, y = Size, fill= Type)) +
+  geom_boxplot() +
+  labs(title = "Stores' size distribution by type of store") +
+  ylab('Store size') +
+  theme(legend.position = "none", legend.title = element_blank())
+
+```
+### We can observe that the types correspond in general to the size of the stores. Store type "A" as the biggest store, followed by ''B" and the smallest is the type "C" store.
+
+### We have around 52 weeks in the dataset which can be used as a Categorical Variable as we can see trends in Sales across weeks. But doing this would complicate the model with too many variables.
+
+### Instead, we can try to cluster the weeks based on Sales. There are weeks with lows and peaks in Sales and then there are majority of the weeks with Sales around the median value
+
+### We split the data yearwise and Type wise to calculate an Upper (5% higher than Mean) and Lower (5% lower than Mean) Threshold Sales Value. We cluster weeks with Sales higher than Upper threshold as High weeks, lower than Lower threshold as Low weeks and everything else as Medium weeks. These Clusters are shown in below plot
+
+
+
+### Bar graph
+
+### Plot Mean Sales per Store
+
+```{r}
+
+# Plot Mean Sales per Store
+
+ggplot(dfTrainMerged, aes(x = Store, y = Weekly_Sales)) +
+  stat_summary(fun.y=("mean"), geom="bar", fill="orange") +
+  labs(x = "Store", y = "Weekly Sales", title = "Mean Sales per Store") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous(breaks=min(dfTrainMerged$Store):max(dfTrainMerged$Store), expand=c(0,0.1)) 
+
+```
+
+### Plot Mean Sales per Department
+
+```{r}
+# Plot Mean Sales per Dept
+
+ggplot(dfTrainMerged, aes(x = Dept, y = Weekly_Sales)) +
+  stat_summary(fun= ("mean"), geom="bar", fill="gold") +
+  labs(x = "Department", y = "Weekly Sales", title = "Mean Sales per Department") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_x_continuous(breaks=min(dfTrainMerged$Dept):max(dfTrainMerged$Dept), expand=c(0,0.5)) 
+
+ggsave("Mean Sales per Department.png", width = 50, height = 20, units = "cm")
+
+
+```
+## create sum per day over time graph
+
+```{r}
+
+
+graph1<-dfTrainMerged %>% 
+  group_by(Date) %>% 
+  summarise(sum=sum(Weekly_Sales)) %>%
+  ggplot( aes(x=Date, y=sum))+geom_line()+geom_smooth()
+
+graph1
+
+```
+
+
+#### Weekly Sales is positively skewed indicating few large values. This could be caused by the festive Weeks which are few but Sales value for these weeks would be very high in comparison to other weeks
+
+#### We can transform it using a log transformation as can be seem from the second plot. This might be required when we build the model too.
+
+
+## Vizualizing Subsets of the Data
+
+```{r}
+mean_markdown1 <- mean(dfTrainMerged$MarkDown1)
+mean_markdown2 <- mean(dfTrainMerged$MarkDown2)
+mean_markdown3 <- mean(dfTrainMerged$MarkDown3)
+mean_markdown4 <- mean(dfTrainMerged$MarkDown4)
+mean_markdown5 <- mean(dfTrainMerged$MarkDown5)
+final_markdown <- mean_markdown1 + mean_markdown2 + mean_markdown3 + mean_markdown4 + mean_markdown5
+average_final_markdown = mean(final_markdown )
+average_final_markdown
+
+```
+## Which store has maximum sales
+
+
+```{r}
+
+store_max_sales <- dfTrainMerged %>% group_by(Store) %>% summarise(tot_sales = sum(Weekly_Sales)) %>% 
+  filter(tot_sales == max(tot_sales))
+store_max_sales
+
+```
+
+# Some holidays have a negative impact on sales. Find out holidays which have higher sales than the mean sales 
+# in non-holiday season for all stores together
+# Hint : You need to find dates where weekly_sales > avg_non_holiday_sales & holiday_flag == 1
+
+
+```{r}
+
+mean_non_holiday_sales<- dfTrainMerged %>% filter(IsHoliday == '0') %>% 
+  summarise(total_non_holiday_sales = mean(Weekly_Sales)) 
+
+mean_non_holiday_sales
+
+holiday_sales <- dfTrainMerged %>% group_by(Date)%>% filter(IsHoliday == '1') %>% 
+  summarise(total_holiday_sales = sum(Weekly_Sales)) %>% 
+  mutate(holiday_higher_sales_than_mean_non_holidays = total_holiday_sales > mean_non_holiday_sales)
+
+print(holiday_sales)
+
+#library(lubridate)
+holiday_sales$Holiday <- ifelse(month(ymd(holiday_sales$Date)) == 2,"Super Bowl" ,
+                                ifelse(month(ymd(holiday_sales$Date)) == 9,"Labour Day" ,
+                                       ifelse(month(ymd(holiday_sales$Date)) == 11,"Thanksgiving" ,"Christmas")))
+holiday_sales
+
+
+
+```
+
+
+## Vizualize Scatter Plots
+
+### Plot of Store Size against Sales
+
+
+```{r}
+
+ggplot(dfTrainMerged, aes(x = Size, y = Weekly_Sales, color = origin))+ 
+  labs(x = "size", y = "Weekly_Sales", title = "What is the Weekly sales per store Type?")+
+  geom_point() + 
+  ggtitle("Store Size vs Sales")
+
+
+```
+
+
+
+### Plot Weekly Sales by Holiday 
+
+```{r}
+
+# Plot Weekly Sales by Holiday dummy
+
+library(ggplot2)
+
+ggplot(data = dfTrainMerged) + 
+  geom_point(mapping = aes(x = IsHoliday, y = Weekly_Sales, color=origin)) +
+  labs(x = "Holiday", y = "Weekly Sales", title = "Is weekly sales higher on a holiday?")
+  geom_smooth(mapping = aes(x = IsHoliday, y = Weekly_Sales))
+
+
+```
+###  Scatter Plot Weekly Sales by Type 
+
+
+```{r}
+# Plot Weekly Sales by Type
+ggplot(data = dfTrainMerged) + 
+  geom_point(mapping = aes(x = Type, y = Weekly_Sales, color = origin)) +
+  labs(x = "Type", y = "Weekly Sales", title = "Is weekly sales higher by Store Type?")
+  geom_smooth(mapping = aes(x = Type, y = Weekly_Sales))
+```
+
+### Scatter Plot Weekly Sales by Size 
+
+
+```{r}
+
+# Plot Weekly Sales by Size
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = Size, y = Weekly_Sales, color=origin)) +
+  labs(x = "Size", y = "Weekly Sales", title = "Is weekly sales higher by store size?")
+
+
+```
+
+### Plot Weekly Sales by Temperature 
+
+```{r}
+
+# Plot Weekly Sales by Temperature
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = Temperature, y = Weekly_Sales, color=origin)) +
+  labs(x = "Temperature", y = "Weekly Sales", title = "Is weekly sales higher the hotter it is outside?")
+
+```
+
+
+### Plot Weekly Sales by Fuel Price 
+
+
+```{r}
+
+# Plot Weekly Sales by Fuel Price
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = Fuel_Price, y = Weekly_Sales, color =origin)) +
+  labs(x = "Fuel Price", y = "Weekly Sales", title = "What about the relationship with fuel price?")
+
+```
+
+
+
+### Plot Weekly Sales by CPI 
+
+
+```{r}
+
+# Plot Weekly Sales by CPI
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = CPI, y = Weekly_Sales, color = origin)) +
+  labs(x = "CPI", y = "Weekly Sales", title = "Sales are higher at lower CPI (inflation)?")
+
+```
+
+### Plot Weekly Sales by Unemployment Rate
+
+```{r}
+
+# Plot Weekly Sales by Unemployment Rate
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = Unemployment, y = Weekly_Sales, color = origin)) +
+  labs(x = "Unemployment", y = "Weekly Sales", title = "Sales are higher at lower unemployment rates?")
+```
+
+### Plot Weekly Sales by Dept
+
+```{r}
+
+# Plot Weekly Sales by Dept
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = Dept, y = Weekly_Sales, color = origin)) +
+  labs(x = "Department", y = "Weekly Sales", title = "Which department performs best?")
+
+```
+
+### Plot Weekly Sales by Markdown1
+
+```{r}
+
+# Plot Weekly Sales by Markdown1
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = MarkDown1, y = Weekly_Sales, color = origin)) +
+  labs(x = "Markdown 1", y = "Weekly Sales", title = "Sales during Markdown 1")
+
+```
+
+### Plot Weekly Sales by Markdown2
+
+```{r}
+
+# Plot Weekly Sales by Markdown2
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = MarkDown2, y = Weekly_Sales, color = origin )) +
+  labs(x = "Markdown 2", y = "Weekly Sales", title = "Sales during Markdown 2")
+
+
+```
+### Plot Weekly Sales by Markdown3
+
+```{r}
+
+# Plot Weekly Sales by Markdown3
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = MarkDown3, y = Weekly_Sales, color = origin )) +
+  labs(x = "Markdown 3", y = "Weekly Sales", title = "Sales during Markdown 3")
+
+```
+### Plot Weekly Sales by Markdown4
+
+```{r}
+
+# Plot Weekly Sales by Markdown4
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = MarkDown4, y = Weekly_Sales, fill = "pink", color = origin)) +
+  labs(x = "Markdown 4", y = "Weekly Sales", title = "Sales during Markdown 4")
+
+
+
+```
+### Plot Weekly Sales by Markdown5
+
+```{r}
+
+# Plot Weekly Sales by Markdown5
+
+ggplot(data = dfTrainMerged) +
+  geom_point(mapping = aes(x = MarkDown5, y = Weekly_Sales, fill= 'purple', color = origin )) +
+  labs(x = "Markdown 5", y = "Weekly Sales", title = "Sales during Markdown 5")
+
+```
+
+# Markdown x Weekly_Sales x Holiday relationship  
+
+```{r}
+
+names(dfTrainMerged1)
+dfTrainMerged1$MarkDown5=as.numeric(dfTrainMerged1$MarkDown5)
+dfTrainMerged1$MarkDown4=as.numeric(dfTrainMerged1$MarkDown4)
+dfTrainMerged1$MarkDown3=as.numeric(dfTrainMerged1$MarkDown3)
+dfTrainMerged1$MarkDown2=as.numeric(dfTrainMerged1$MarkDown2)
+dfTrainMerged1$MarkDown1=as.numeric(dfTrainMerged1$MarkDown1)
+
+ggplot(dfTrainMerged1, aes(Month, MarkDown1, color = origin)) + geom_point() + 
+  ggtitle('MarkDown1') +  
+  theme(plot.title = element_text(size = 20, face = "bold",vjust=-14, hjust = 0.5))
+
+```
+```{r}
+
+ggplot(dfTrainMerged1, aes(Month, MarkDown2, color = origin)) + geom_point() + 
+  ggtitle('MarkDown2') +  
+  theme(plot.title = element_text(size = 20, face = "bold",vjust=-14, hjust = 0.5))
+
+```
+
+```{r}
+
+ggplot(dfTrainMerged1, aes(Month, MarkDown3, color = origin)) + geom_point() + 
+  ggtitle('MarkDown3') +  
+  theme(plot.title = element_text(size = 20, face = "bold",vjust=-14, hjust = 0.5))
+
+
+```
+```{r}
+
+ggplot(dfTrainMerged1, aes(Month, MarkDown4, color = origin)) + geom_point() + 
+  ggtitle('MarkDown4') +  
+  theme(plot.title = element_text(size = 20, face = "bold",vjust=-14, hjust = 0.5))
+
+
+```
+
+```{r}
+
+ggplot(dfTrainMerged1, aes(Month, MarkDown5, color = origin)) + geom_point() + 
+  ggtitle('MarkDown5') +  
+  theme(plot.title = element_text(size = 20, face = "bold",vjust=-14, hjust = 0.5))
+
+```
+
+### Correlation Plots
+
+```{r}
+
+subset2 <- subset(dfTrainMerged, select= c("Size","Weekly_Sales","Temperature","Fuel_Price",
+"MarkDown1","MarkDown2","MarkDown3","MarkDown4","MarkDown5","CPI","Unemployment"))
+res <- cor(subset2)
+head(res)
+
+```
+
+
+### Correlation plot
+
+```{r}
+
+library(corrplot)
+
+corrplot(res, type = "upper", order = "hclust", tl.col = "black", tl.srt = 45)
+
+
+```
+
+
+
+
+```{r}
+
+library(corrplot)
+
+corrplot(res, type = "lower", order = "hclust", tl.col = "black", tl.srt = 45)
+
+
+```
+
+
+### Reordering the correlation matrix using hierarchical clustering
+
+
+```{r}
+
+
+corrplot(res, hc.order = TRUE, outline.col = "white")
+
+# with labels
+
+#corrplot(res, hc.order = TRUE, outline.col = "white", lab = TRUE)
+
+```
+
+### Correlation Heatmap
+
+
+```{r}
+
+col<- colorRampPalette(c("white", "light blue", "navy"))(20)
+
+heatmap(x = res, col = col, symm = TRUE )
+
+
+```
+
+### Calculate the correlation matrix
+
+```{r}
+
+subset2 <- subset(dfTrainMerged, select= c("Size","Weekly_Sales","Temperature","Fuel_Price",
+"MarkDown1","MarkDown2","MarkDown3","MarkDown4","MarkDown5","CPI","Unemployment"))
+res <- cor(subset2)
+head(res)
+
+```
+
+### Visualize the correlation matrix
+
+```{r}
+
+# Visualize the correlation matrix
+
+ ggcorrplot(res, colors = c("light green", "light yellow", "light blue"))
+
+
+```
+### Reordering the correlation matrix using hierarchical clustering
+
+```{r}
+# Reordering the correlation matrix using hierarchical clustering
+
+#corr [is.na(res)] = 0
+
+ggcorrplot(res, hc.order = TRUE, outline.col = "white", colors = c("green", "light yellow", "light blue"))
+
+# with labels
+
+ggcorrplot(res, hc.order = TRUE, outline.col = "white", lab = TRUE, colors = c("green", "light yellow", "lightblue"))
+
+
+```
+
+### TIME SERIES
+
+```{r}
+
+ts_data <- ts(dfTrainMerged$Weekly_Sales, start=2010, end=2012,frequency=12)
+
+plot(ts_data)
+
+```
+## HOlt Winter's filtering
+
+
+```{r}
+
+library(forecast)
+fore_data <- ts(dfTrainMerged$Weekly_Sales, start=2010, end=2012,frequency=12)
+plot(fore_data)
+hw <- HoltWinters(fore_data)
+plot(hw)
+```
+
+
